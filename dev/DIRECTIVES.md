@@ -18,9 +18,9 @@ type-lang is the type-system substrate a front-end reasons with. It represents t
 
 ## 2. Engineering law (non-negotiable)
 
-- **Performance** — peak is the baseline; unification is near-linear with path-compressed variable resolution, not a repeated deep walk; the steady-state unify/substitute path does not allocate per call; no "faster" claim without `criterion` numbers.
+- **Performance** — peak is the baseline; unification visits each node of the two terms once and the structural comparison itself allocates nothing; binding and resolution allocate only the substitution entry or the resolved term they must produce. Variable resolution follows binding chains; if profiling shows long variable-to-variable chains, path compression is the standard tool, applicable as an internal change. No "faster" claim without `criterion` numbers.
 - **Correctness** — the invariants in section 4 are covered by property tests. Unification is sound (it never equates two types that have no common instance), it yields a most-general unifier, and the occurs check rejects infinite types.
-- **Security** — every input is treated as hostile: an arbitrarily deep or cyclic type term is a defined error or a bounded walk, never a stack overflow or UB; variable-id arithmetic cannot overflow into a live variable.
+- **Security** — every input is treated as hostile: a cyclic binding is rejected by the occurs check, so an infinite type is never constructed; unification and the occurs check are iterative (explicit work stacks), so the unification work does not grow the call stack with term depth. Type terms model source-level types and are bounded in depth. Variable ids are 32-bit; the unifier supports up to `u32::MAX` variables and asserts that bound in debug builds.
 - **Architecture** — SOLID, KISS, YAGNI; one responsibility; the type representation, the substitution, and the unification algorithm each sit behind their own seam, and per-language policy is injected, never baked in.
 - **Cross-platform** — Linux/macOS/Windows first-class, verified by CI; no platform-specific behavior in the core.
 - **Error handling** — every fallible path (a failed unification, an occurs-check violation, an unbound variable) returns `Result`/`Option` per the documented contract; a type error carries enough structure for a caller to render it.

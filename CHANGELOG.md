@@ -21,6 +21,30 @@
 
 ---
 
+## [1.0.0] - 2026-06-29
+
+The stable release. The public surface from `0.2.0` is ratified as the `1.0`
+contract, with a recorded SemVer promise, a pre-release soundness fix, and hardening
+of the unifier's variable handling.
+
+### Changed
+
+- The public API is **stable** and follows Semantic Versioning: no breaking changes
+  before `2.0`. The promise is recorded in [`docs/API.md`](docs/API.md#stability).
+  `TypeError` stays `#[non_exhaustive]` so a new failure variant remains a minor
+  change, and the MSRV (Rust 1.85) only rises in a minor release.
+
+### Fixed
+
+- `Unifier::unify` could report success without recording a binding when given a
+  variable the unifier had not minted, leaving the two types unequal in violation of
+  its own postcondition. Such a variable now joins the unifier's id space and is
+  bound, so unification is sound for every input. Found in pre-release review.
+- `Unifier::fresh` now asserts the 32-bit variable-id bound in debug builds, and the
+  `TyVar` documentation describes the id-space contract the API actually upholds.
+
+---
+
 ## [0.2.0] - 2026-06-29
 
 The core the scaffold was built for: a type representation, inference variables, and
@@ -79,6 +103,7 @@ Initial scaffold and repository bootstrap. No domain logic yet &mdash; this rele
 - `.github/workflows/ci.yml` CI matrix; `deny.toml`, `clippy.toml`, `rustfmt.toml`.
 - `dev/DIRECTIVES.md` and `dev/ROADMAP.md` (committed engineering standards + plan).
 
-[Unreleased]: https://github.com/jamesgober/type-lang/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/jamesgober/type-lang/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/jamesgober/type-lang/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/jamesgober/type-lang/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jamesgober/type-lang/releases/tag/v0.1.0

@@ -100,6 +100,11 @@ impl Unifier {
     /// life of the unifier. A fresh variable stands for "some type not yet known";
     /// it gains a binding only when [`unify`](Self::unify) requires one.
     ///
+    /// Variable ids are 32-bit, so a unifier addresses up to `u32::MAX` variables —
+    /// far beyond any realistic inference problem, since the binding table alone
+    /// would need tens of gigabytes long before the id space ran out. The bound is
+    /// asserted in debug builds.
+    ///
     /// # Examples
     ///
     /// ```
@@ -114,6 +119,10 @@ impl Unifier {
     #[inline]
     #[must_use]
     pub fn fresh(&mut self) -> TyVar {
+        debug_assert!(
+            self.bindings.len() < u32::MAX as usize,
+            "Unifier variable count exceeded the u32 id space",
+        );
         let index = self.bindings.len() as u32;
         self.bindings.push(None);
         TyVar::from_index(index)
@@ -274,12 +283,17 @@ impl Unifier {
                 ty: self.resolve(&ty),
             });
         }
-        // The slot exists for every variable this unifier minted; a variable from
-        // another unifier is out of contract and is left untracked rather than
-        // panicking.
-        if let Some(slot) = self.bindings.get_mut(var.to_u32() as usize) {
-            *slot = Some(ty);
+        // A variable this unifier has not minted (one passed in from elsewhere)
+        // joins its id space here as a freshly bound variable. Growing the table
+        // keeps `unify`'s postcondition sound — the binding is always recorded —
+        // rather than dropping it and reporting a success that did not happen. In
+        // normal single-unifier use the index is always in range and no growth
+        // occurs.
+        let index = var.to_u32() as usize;
+        if index >= self.bindings.len() {
+            self.bindings.resize(index + 1, None);
         }
+        self.bindings[index] = Some(ty);
         Ok(())
     }
 
@@ -425,5 +439,61 @@ mod tests {
         let a = Unifier::default();
         let b = Unifier::new();
         assert_eq!(a.var_count(), b.var_count());
+    }
+
+    #[test]
+    fn test_two_unbound_variables_share_a_representative() {
+        let mut u = Unifier::new();
+        let x = u.fresh();
+        let y = u.fresh();
+        u.unify(&Type::var(x), &Type::var(y)).unwrap();
+        // Neither is bound to a constructor, but both now resolve to one variable.
+        assert_eq!(u.resolve(&Type::var(x)), u.resolve(&Type::var(y)));
+    }
+
+    #[test]
+    fn test_variable_from_another_unifier_binds_soundly() {
+        // Regression: a variable this unifier did not mint must still be recorded
+        // when bound — `unify` may never report success while leaving the two sides
+        // unequal. The variable joins this unifier's id space.
+        let mut origin = Unifier::new();
+        let v = origin.fresh(); // belongs to `origin`
+
+        let mut other = Unifier::new(); // has no variables of its own yet
+        other.unify(&Type::var(v), &Type::con(INT)).unwrap();
+
+        // The postcondition holds: both sides resolve to the same type.
+        assert_eq!(other.resolve(&Type::var(v)), Type::con(INT));
+        assert_eq!(other.var_count(), 1);
+    }
+
+    #[test]
+    fn test_resolve_handles_a_deep_chain() {
+        // v0 = List<v1>, v1 = List<v2>, ..., v_{n-1} = int. Resolving v0 nests the
+        // whole chain; check it terminates correctly without misbehaving.
+        let mut u = Unifier::new();
+        let depth = 1_000usize;
+        let vars: Vec<_> = (0..depth).map(|_| u.fresh()).collect();
+        for window in vars.windows(2) {
+            u.unify(
+                &Type::var(window[0]),
+                &Type::app(LIST, vec![Type::var(window[1])]),
+            )
+            .unwrap();
+        }
+        u.unify(&Type::var(vars[depth - 1]), &Type::con(INT))
+            .unwrap();
+
+        let resolved = u.resolve(&Type::var(vars[0]));
+
+        // Walk the resolved structure iteratively: depth-1 List wrappers, then int.
+        let mut cur = &resolved;
+        let mut wrappers = 0usize;
+        while cur.head() == Some(LIST) {
+            wrappers += 1;
+            cur = &cur.args()[0];
+        }
+        assert_eq!(wrappers, depth - 1);
+        assert_eq!(*cur, Type::con(INT));
     }
 }

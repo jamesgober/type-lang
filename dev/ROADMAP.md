@@ -27,7 +27,12 @@ now: `TypeError` is shaped to map onto a `diag-lang` diagnostic in the caller's 
 type names. They will be wired only if and when a consumer-facing pass inside this
 crate first needs them.
 
-## v1.0.0 - API freeze
-Public surface stable and frozen until 2.0.
-- [ ] docs/API.md marked stable; SemVer promise recorded.
-- [ ] Full test + benchmark suite green on all three platforms.
+## v1.0.0 - API freeze (DONE)
+Public surface stable and frozen until 2.0. No new public API — this ratifies the
+`0.2.0` surface as the `1.0` contract, plus a pre-release soundness fix and hardening.
+- [x] docs/API.md marked stable; SemVer promise recorded.
+- [x] Soundness fix: an unseen variable now binds soundly instead of `unify`
+      reporting a success it did not make (found in pre-release review).
+- [x] `fresh` debug-asserts the u32 id-space bound; `TyVar` docs match the real contract.
+- [x] Full property-test, doctest, and benchmark suite green; verified on Linux (WSL2)
+      and Windows, stable 1.95 and MSRV 1.85.

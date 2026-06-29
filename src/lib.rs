@@ -57,11 +57,11 @@
 //!
 //! ## Stability
 //!
-//! The public surface is being designed across the 0.x series and frozen at `1.0`,
-//! after which it follows Semantic Versioning. [`TypeError`] is `#[non_exhaustive]`
-//! so new failure modes remain additive. See
-//! [`docs/API.md`](https://github.com/jamesgober/type-lang/blob/main/docs/API.md)
-//! and [`dev/ROADMAP.md`](https://github.com/jamesgober/type-lang/blob/main/dev/ROADMAP.md).
+//! As of `1.0` the public surface is **stable** and follows Semantic Versioning: no
+//! breaking changes before `2.0`. [`TypeError`] is `#[non_exhaustive]`, so a new
+//! failure mode is an additive, minor change, and the MSRV (Rust 1.85) only rises in
+//! a minor release. The full promise is in
+//! [`docs/API.md`](https://github.com/jamesgober/type-lang/blob/main/docs/API.md#stability).
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(docsrs, feature(doc_cfg))]

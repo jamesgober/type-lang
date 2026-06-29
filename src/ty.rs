@@ -7,8 +7,10 @@ use core::fmt;
 ///
 /// A `TyVar` is a 32-bit handle minted by [`Unifier::fresh`](crate::Unifier::fresh)
 /// and stable for the life of that unifier. It is deliberately opaque: there is no
-/// public constructor, so a variable can only come from the unifier that tracks
-/// it, and that unifier always knows how to resolve it.
+/// public constructor, so a variable can only be obtained from a unifier. Mint and
+/// use variables in the same unifier — a handle is an index into that unifier's id
+/// space, and a unifier treats an id it has not minted as an unbound variable, so a
+/// handle is only meaningful against the unifier that produced it.
 ///
 /// A variable starts life unbound — it stands for "some type" — and unification
 /// may bind it to a concrete type or to another variable. Use
@@ -357,5 +359,21 @@ mod tests {
         assert_eq!(Type::con(INT).to_string(), "#0");
         let nested = Type::app(PAIR, vec![Type::con(INT), Type::var(TyVar::from_index(1))]);
         assert_eq!(nested.to_string(), "#5(#0, ?1)");
+    }
+
+    #[test]
+    fn test_handles_work_as_map_keys() {
+        use alloc::collections::BTreeMap;
+
+        // TyVar and TyCon derive Ord + Hash, so they key ordered and hashed maps.
+        let mut cons: BTreeMap<TyCon, u32> = BTreeMap::new();
+        let _ = cons.insert(INT, 0);
+        let _ = cons.insert(PAIR, 1);
+        assert_eq!(cons.get(&PAIR), Some(&1));
+
+        let mut vars: BTreeMap<TyVar, &str> = BTreeMap::new();
+        let _ = vars.insert(TyVar::from_index(0), "a");
+        let _ = vars.insert(TyVar::from_index(1), "b");
+        assert_eq!(vars.get(&TyVar::from_index(1)), Some(&"b"));
     }
 }

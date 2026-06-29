@@ -1,10 +1,9 @@
 # type-lang &mdash; API Reference
 
 > Complete reference for every public item in `type-lang`, with examples.
-> **Status: pre-1.0.** The surface below is implemented and documented as of
-> `v0.2.0`; it is being designed across the 0.x series and will be **frozen at
-> `1.0`**, after which it follows [Semantic Versioning](#stability). See
-> [`../dev/ROADMAP.md`](../dev/ROADMAP.md).
+> **Status: stable (1.0).** The surface below is the `1.0` contract; it follows
+> [Semantic Versioning](#stability) and will not change in a breaking way before
+> `2.0`. See [`../dev/ROADMAP.md`](../dev/ROADMAP.md).
 
 ## Table of Contents
 
@@ -54,17 +53,24 @@ interprets them. It does no parsing and renders no diagnostics.
 
 ## Stability
 
-The crate is **pre-1.0**. The public items in this reference are implemented and
-will be refined across the 0.x series, then frozen at `1.0`, after which:
+As of `1.0.0` the public API documented here is **stable**. The crate follows
+[Semantic Versioning](https://semver.org):
 
-- No item will be **removed or changed in a breaking way** within a major series.
-- New functionality arrives in **minor** releases and is additive.
-  [`TypeError`](#typeerror) is `#[non_exhaustive]`, so a new failure mode is a minor
-  change — match it with a wildcard arm.
-- The **MSRV** is Rust `1.85`; raising it is a minor change, never a patch.
+- No item in this reference will be **removed or changed in a breaking way** within
+  the `1.x` series. Breaking changes wait for `2.0`.
+- New functionality arrives in **minor** releases (`1.1`, `1.2`, …) and is additive.
+  [`TypeError`](#typeerror) is `#[non_exhaustive]`, so a new failure variant is a
+  minor change, not a breaking one — match it with a wildcard arm.
+- Bug fixes, documentation, and internal optimisation are **patch** releases.
+  Internal representation (how the substitution is stored, whether resolution is
+  path-compressed) is not part of the contract and may change in a patch.
+- The **MSRV** is Rust `1.85`. Raising it is treated as a minor change and called
+  out in the changelog; it is never a patch.
+- The **`serde` wire format** of `Type`, `TyVar`, `TyCon`, and `Unifier` is part of
+  the contract: a value serialised by one `1.x` reads back in any later `1.x`.
 
-Until `1.0`, treat the surface as settling: it is documented in full so it can be
-reviewed, but minor breaking refinements may still land in a `0.x` bump.
+Anything not in this reference — private fields, exact `Debug` output, the
+structural `Display` notation — is not part of the contract and may change.
 
 ---
 
@@ -72,7 +78,7 @@ reviewed, but minor breaking refinements may still land in a `0.x` bump.
 
 ```toml
 [dependencies]
-type-lang = "0.2"
+type-lang = "1.0"
 ```
 
 Or from the terminal:
@@ -743,7 +749,7 @@ Disabling `std` keeps the crate `no_std`:
 
 ```toml
 [dependencies]
-type-lang = { version = "0.2", default-features = false }
+type-lang = { version = "1.0", default-features = false }
 ```
 
 ---
