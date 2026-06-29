@@ -18,7 +18,7 @@
 
 <div align="left">
     <p>
-        type-lang is the SEMA-tier crate: Type representation, unification, and inference scaffolding; per-language rules layer on top. Part of the -lang language-construction family; see _strategy/LANG_COLLECTION.md for the master plan.
+        <b>type-lang</b> is the type-system substrate of a compiler front-end: a representation for types, a unifier that makes two types equal and records what that requires, and a structured error for when they cannot be made equal. It owns the soundness-critical core &mdash; type terms, inference variables, and first-order unification &mdash; and a language's own type rules layer on top. It does no parsing and renders no diagnostics. Part of the <code>-lang</code> language-construction family.
     </p>
     <br>
     <hr>
@@ -26,25 +26,91 @@
         <strong>MSRV is 1.85+</strong> (Rust 2024 edition).
     </p>
     <blockquote>
-        <strong>Status: pre-1.0, in active development.</strong> The public API is being designed across the 0.x series and frozen at <code>1.0.0</code>. See <a href="./CHANGELOG.md"><code>CHANGELOG.md</code></a>.
+        <strong>Status: pre-1.0, in active development.</strong> The public API is being designed across the 0.x series and frozen at <code>1.0.0</code>. See <a href="./CHANGELOG.md"><code>CHANGELOG.md</code></a> and <a href="./docs/API.md"><code>docs/API.md</code></a>.
     </blockquote>
 </div>
 
 <hr>
 <br>
 
+## Highlights
+
+- **First-order unification** with an occurs check, so a variable can never be bound to a type that contains itself. The substitution produced is a most-general unifier.
+- **Language-agnostic** type representation: constructors are opaque tags the consumer assigns meaning to, so the same core expresses primitives, generics, functions, and tuples.
+- **Iterative core** &mdash; unification and the occurs check use explicit work stacks, so a deeply nested type cannot overflow the call stack.
+- **`no_std`-friendly** (needs only `alloc`), with optional `serde` for serialising type terms and inference state.
+- **No panics** in shipping code; every failure is a defined `TypeError`. `#![forbid(unsafe_code)]`.
+
+<br>
+
 ## Installation
 
 ```toml
 [dependencies]
-type-lang = "0.1"
+type-lang = "0.2"
 ```
 
 <br>
 
-## Status
+## Usage
 
-This is the <code>v0.1.0</code> scaffold: structure, tooling, and quality gates are in place; the implementation lands across the 0.x series per the <a href="./dev/ROADMAP.md"><code>ROADMAP</code></a> and <a href="./docs/API.md"><code>docs/API.md</code></a>.
+A consumer assigns meaning to constructor tags, then unifies the types it builds.
+Unification discovers what the inference variables must be:
+
+```rust
+use type_lang::{TyCon, Type, Unifier};
+
+// The consumer's constructor table — the tags are arbitrary but stable.
+const FUNCTION: TyCon = TyCon::new(0);
+const INT: TyCon = TyCon::new(1);
+const BOOL: TyCon = TyCon::new(2);
+
+let mut unifier = Unifier::new();
+let arg = unifier.fresh();
+let ret = unifier.fresh();
+
+// A call site needs a function (?arg) -> ?ret; the callee is (int) -> bool.
+let needed = Type::app(FUNCTION, [Type::var(arg), Type::var(ret)]);
+let callee = Type::app(FUNCTION, [Type::con(INT), Type::con(BOOL)]);
+unifier.unify(&needed, &callee).expect("same constructor and arity");
+
+// Unification solved both variables.
+assert_eq!(unifier.resolve(&Type::var(arg)), Type::con(INT));
+assert_eq!(unifier.resolve(&Type::var(ret)), Type::con(BOOL));
+```
+
+Failures are values, not panics — a mismatch carries the clashing types, and a
+self-referential type is rejected by the occurs check:
+
+```rust
+use type_lang::{TyCon, Type, TypeError, Unifier};
+
+const INT: TyCon = TyCon::new(0);
+const LIST: TyCon = TyCon::new(1);
+
+let mut unifier = Unifier::new();
+
+// Different constructors do not unify.
+let err = unifier.unify(&Type::con(INT), &Type::con(LIST)).unwrap_err();
+assert!(matches!(err, TypeError::Mismatch { .. }));
+
+// ?v = List<?v> would be an infinite type.
+let v = unifier.fresh();
+let recursive = Type::app(LIST, [Type::var(v)]);
+let err = unifier.unify(&Type::var(v), &recursive).unwrap_err();
+assert!(matches!(err, TypeError::Occurs { .. }));
+```
+
+See [`docs/API.md`](./docs/API.md) for the full reference.
+
+<br>
+
+## Feature flags
+
+| Feature | Default | Description |
+|---------|---------|-------------|
+| `std`   | yes     | Builds against the standard library. With `default-features = false` the crate is `no_std` (it always needs `alloc`); the full API works unchanged. |
+| `serde` | no      | Derives `Serialize` / `Deserialize` for `Type`, `TyVar`, `TyCon`, and `Unifier`. |
 
 <hr>
 <br>
