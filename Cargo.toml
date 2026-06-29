@@ -19,10 +19,10 @@ readme = "README.md"
 description = "Type representation, unification, and inference scaffolding."
 
 # Keywords (5 max)
-keywords = [compiler,language,types,inference]
+keywords = ["compiler", "language", "types", "inference"]
 
 # Categories
-categories = [development-tools,compilers]
+categories = ["development-tools", "compilers"]
 
 # Links
 homepage      = "https://github.com/jamesgober/type-lang"
