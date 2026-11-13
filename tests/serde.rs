@@ -51,3 +51,36 @@ fn unifier_state_round_trips_and_keeps_its_bindings() {
         Type::app(LIST, [Type::con(INT)]),
     );
 }
+
+#[test]
+fn unifier_with_a_self_binding_is_refused() {
+    let restored: Result<Unifier, _> = serde_json::from_str(r#"{"bindings":[{"Var":0}]}"#);
+    let err = restored.unwrap_err().to_string();
+    assert!(err.contains("cycle"), "{err}");
+}
+
+#[test]
+fn unifier_with_a_binding_cycle_is_refused() {
+    // ?0 := List<?1>, ?1 := ?2, ?2 := Pair(int, ?0)
+    let json = r#"{"bindings":[
+        {"App":[2,[{"Var":1}]]},
+        {"Var":2},
+        {"App":[3,[{"App":[1,[]]},{"Var":0}]]}
+    ]}"#;
+    let restored: Result<Unifier, _> = serde_json::from_str(json);
+    let err = restored.unwrap_err().to_string();
+    assert!(err.contains("cycle"), "{err}");
+}
+
+#[test]
+fn unifier_with_shared_acyclic_bindings_is_accepted() {
+    // ?0 := Pair(?1, ?1), ?1 := List<?2>, ?2 unbound, ?3 := ?0
+    let json = r#"{"bindings":[
+        {"App":[3,[{"Var":1},{"Var":1}]]},
+        {"App":[2,[{"Var":2}]]},
+        null,
+        {"Var":0}
+    ]}"#;
+    let restored: Unifier = serde_json::from_str(json).unwrap();
+    assert_eq!(restored.var_count(), 4);
+}

@@ -304,22 +304,41 @@ impl Type {
     }
 }
 
+/// Renders a variable as `?N` and a constructor as `#N`, with its arguments in
+/// parentheses: `#5(#0, ?1)`.
+///
+/// Iterative, with an explicit stack, so printing a deeply nested type cannot
+/// overflow the call stack.
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Var(v) => write!(f, "?{}", v.to_u32()),
-            Self::App(head, args) => {
-                write!(f, "#{}", head.to_u32())?;
-                if let [first, rest @ ..] = args.as_slice() {
-                    write!(f, "({first}")?;
-                    for arg in rest {
-                        write!(f, ", {arg}")?;
+        enum Piece<'a> {
+            Term(&'a Type),
+            Text(&'static str),
+        }
+
+        let mut stack = Vec::new();
+        stack.push(Piece::Term(self));
+        while let Some(piece) = stack.pop() {
+            match piece {
+                Piece::Text(text) => f.write_str(text)?,
+                Piece::Term(Self::Var(v)) => write!(f, "?{}", v.to_u32())?,
+                Piece::Term(Self::App(head, args)) => {
+                    write!(f, "#{}", head.to_u32())?;
+                    if !args.is_empty() {
+                        // Pushed in reverse, so they pop as `(`, arg, `, `, arg, `)`.
+                        stack.push(Piece::Text(")"));
+                        for (i, arg) in args.iter().enumerate().rev() {
+                            stack.push(Piece::Term(arg));
+                            if i > 0 {
+                                stack.push(Piece::Text(", "));
+                            }
+                        }
+                        stack.push(Piece::Text("("));
                     }
-                    write!(f, ")")?;
                 }
-                Ok(())
             }
         }
+        Ok(())
     }
 }
 

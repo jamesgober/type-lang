@@ -604,7 +604,9 @@ of itself; an unbound variable resolves to itself.
 > **Cost.** The walk is proportional to the size of the resolved *result*. A
 > substitution that maps a variable to a type mentioning it more than once can make
 > the result larger than the input, so resolve once a type is fully constrained
-> rather than after every step.
+> rather than after every step. The walk is iterative, so a deep result does not
+> overflow the call stack here; the returned `Type` is an ordinary nested value,
+> though, and dropping or cloning it recurses once per level.
 
 ```rust
 use type_lang::{TyCon, Type, Unifier};
@@ -668,7 +670,11 @@ The reason a [`unify`](#unifierunify) call failed. The enum is `#[non_exhaustive
 so a downstream `match` must include a wildcard arm. It derives `Clone`, `Debug`,
 `PartialEq`, and `Eq`, and implements `core::error::Error` and `Display`. Both
 variants carry their types **resolved** under the substitution at the point of
-failure, so they show the most concrete form known.
+failure, so they show the most concrete form known. Substitution stops once a
+payload is 64 levels deep or holds about 1,024 nodes. Past that, a bound variable is
+left in place, so a failure at the end of a very long chain of bindings
+still yields a small error that is cheap to print, compare and drop.
+[`resolve`](#unifierresolve) expands such a variable fully.
 
 **`Mismatch { expected, found }`** — the two types do not share a constructor: the
 heads differ, or the same head is applied to a different arity.
@@ -713,6 +719,9 @@ With the `serde` feature, [`Type`](#type), [`TyVar`](#tyvar), [`TyCon`](#tycon),
 [`Unifier`](#unifier) implement `serde::Serialize` and `serde::Deserialize`. A type
 term round-trips through any serde format, and a whole `Unifier` — its variables and
 their bindings — can be serialised to persist or transfer an inference state.
+Deserializing a `Unifier` checks its bindings and fails if they form a cycle (a
+variable bound, directly or through others, to a type containing itself), since such
+state would make later calls loop forever.
 
 ```rust,ignore
 use type_lang::{TyCon, Type, Unifier};

@@ -11,13 +11,33 @@
 
 ## [Unreleased]
 
-### Added
+---
 
-### Changed
+## [1.0.1] - 2026-11-12
 
 ### Fixed
 
-### Security
+- The occurs check took time exponential in the depth of shared bindings. With
+  `?i := Pair(?i+1, ?i+1)` for 30 variables, binding one more variable to `?0`
+  took seconds and grew twice as slow with each step. Each binding is now
+  searched once per check.
+- `unify` of two types whose bindings share structure the same way repeated the
+  work once per path. It now unifies each pair of variables once per call.
+- A `Mismatch` or `Occurs` error at the end of a long chain of bindings
+  overflowed the stack, because the error payload was resolved recursively.
+  `resolve` is now iterative, and error payloads stop substituting variables
+  once they are 64 levels deep or hold about 1,024 nodes. Past that, a bound
+  variable is left in place; `resolve` expands it fully.
+- `Display` for `Type` is now iterative, so printing a deeply nested type does
+  not overflow the stack.
+- With the `serde` feature, deserializing a `Unifier` whose bindings form a
+  cycle (for example `?0` bound to `?0`) used to succeed, and later calls then
+  looped forever. It is now refused with an error.
+
+### Changed
+
+- `unify` shortens chains of variables bound to variables as it walks them, so
+  a long chain is walked once instead of on every call.
 
 ---
 
@@ -103,7 +123,8 @@ Initial scaffold and repository bootstrap. No domain logic yet &mdash; this rele
 - `.github/workflows/ci.yml` CI matrix; `deny.toml`, `clippy.toml`, `rustfmt.toml`.
 - `dev/DIRECTIVES.md` and `dev/ROADMAP.md` (committed engineering standards + plan).
 
-[Unreleased]: https://github.com/jamesgober/type-lang/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/jamesgober/type-lang/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/jamesgober/type-lang/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/jamesgober/type-lang/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/jamesgober/type-lang/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jamesgober/type-lang/releases/tag/v0.1.0

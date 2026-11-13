@@ -1,9 +1,10 @@
 //! The unifier: inference variables, their substitution, and unification.
 
+use alloc::collections::BTreeSet;
 use alloc::vec::Vec;
 
 use crate::error::TypeError;
-use crate::ty::{TyVar, Type};
+use crate::ty::{TyCon, TyVar, Type};
 
 /// Holds the inference variables of a type problem and the substitution that
 /// unification builds over them.
@@ -43,6 +44,7 @@ use crate::ty::{TyVar, Type};
 /// assert_eq!(unifier.resolve(&Type::var(ret)), Type::con(INT));
 /// ```
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(try_from = "serde_repr::UnifierRepr"))]
 #[derive(Clone, Debug, Default)]
 pub struct Unifier {
     /// Indexed by [`TyVar`]: `None` is unbound, `Some(ty)` is the variable's
@@ -180,18 +182,32 @@ impl Unifier {
     pub fn unify(&mut self, a: &Type, b: &Type) -> Result<(), TypeError> {
         let mut work = Vec::new();
         work.push((a.clone(), b.clone()));
+        // Pairs of variables already queued in this call. Bindings can share
+        // structure (two variables bound to types that mention the same third
+        // variable), and without this a shared pair would be unified once per
+        // path to it, which grows exponentially with the depth of the sharing.
+        // Skipping a repeat is sound: the first occurrence queued all the work
+        // that makes the pair equal, and every queued item runs before `unify`
+        // returns.
+        let mut seen_pairs: BTreeSet<(TyVar, TyVar)> = BTreeSet::new();
 
         while let Some((lhs, rhs)) = work.pop() {
-            let lhs = self.shallow(lhs);
-            let rhs = self.shallow(rhs);
+            if let (Type::Var(x), Type::Var(y)) = (&lhs, &rhs) {
+                let pair = if x <= y { (*x, *y) } else { (*y, *x) };
+                if !seen_pairs.insert(pair) {
+                    continue;
+                }
+            }
+            let lhs = self.shallow_compress(lhs);
+            let rhs = self.shallow_compress(rhs);
             match (lhs, rhs) {
                 (Type::Var(x), Type::Var(y)) if x == y => {}
                 (Type::Var(x), other) | (other, Type::Var(x)) => self.bind(x, other)?,
                 (Type::App(head1, args1), Type::App(head2, args2)) => {
                     if head1 != head2 || args1.len() != args2.len() {
                         return Err(TypeError::Mismatch {
-                            expected: self.resolve(&Type::App(head1, args1)),
-                            found: self.resolve(&Type::App(head2, args2)),
+                            expected: self.resolve_for_error(&Type::App(head1, args1)),
+                            found: self.resolve_for_error(&Type::App(head2, args2)),
                         });
                     }
                     work.extend(args1.into_iter().zip(args2));
@@ -242,15 +258,65 @@ impl Unifier {
     /// ```
     #[must_use]
     pub fn resolve(&self, ty: &Type) -> Type {
-        match ty {
-            Type::Var(v) => match self.binding(*v) {
-                Some(bound) => self.resolve(bound),
-                None => Type::Var(*v),
-            },
-            Type::App(head, args) => {
-                Type::App(*head, args.iter().map(|arg| self.resolve(arg)).collect())
+        self.resolve_within(ty, usize::MAX, usize::MAX)
+    }
+
+    /// Resolves a type for an error payload. Variables are substituted only
+    /// while the result stays within [`ERROR_DEPTH`] levels and [`ERROR_NODES`]
+    /// nodes; past that, a bound variable is left as it is. The payload stays
+    /// correct (resolving it again gives the full type) and small enough to
+    /// print, compare and drop, even when the full type is huge or very deep.
+    fn resolve_for_error(&self, ty: &Type) -> Type {
+        self.resolve_within(ty, ERROR_DEPTH, ERROR_NODES)
+    }
+
+    /// Resolves `ty`, substituting a bound variable only while the output is
+    /// shallower than `max_depth` and has fewer than `max_nodes` nodes.
+    /// Constructors already present in `ty` are always copied.
+    ///
+    /// Iterative: explicit stacks replace recursion, so a deep type cannot
+    /// overflow the call stack here.
+    fn resolve_within(&self, ty: &Type, max_depth: usize, max_nodes: usize) -> Type {
+        enum Step<'a> {
+            /// Resolve this term at this output depth.
+            Visit(&'a Type, usize),
+            /// Pop this many resolved arguments and apply the constructor.
+            Build(TyCon, usize),
+        }
+
+        let mut steps = Vec::new();
+        let mut out: Vec<Type> = Vec::new();
+        let mut nodes = 0usize;
+        steps.push(Step::Visit(ty, 0));
+
+        while let Some(step) = steps.pop() {
+            match step {
+                Step::Visit(Type::Var(v), depth) => {
+                    let expand = depth < max_depth && nodes < max_nodes;
+                    match self.binding(*v) {
+                        Some(bound) if expand => steps.push(Step::Visit(bound, depth)),
+                        _ => {
+                            nodes = nodes.saturating_add(1);
+                            out.push(Type::Var(*v));
+                        }
+                    }
+                }
+                Step::Visit(Type::App(head, args), depth) => {
+                    nodes = nodes.saturating_add(1);
+                    steps.push(Step::Build(*head, args.len()));
+                    // Pushed in reverse so the first argument is resolved first
+                    // and the results land on `out` in order.
+                    for arg in args.iter().rev() {
+                        steps.push(Step::Visit(arg, depth.saturating_add(1)));
+                    }
+                }
+                Step::Build(head, arity) => {
+                    let args = out.split_off(out.len().saturating_sub(arity));
+                    out.push(Type::App(head, args));
+                }
             }
         }
+        out.pop().unwrap_or_else(|| ty.clone())
     }
 
     /// Returns the direct binding of `var`, or `None` if it is unbound (or not from
@@ -262,14 +328,45 @@ impl Unifier {
 
     /// Follows variable bindings at the top level until the term is either an
     /// unbound variable or a constructor. Does not descend into arguments.
-    fn shallow(&self, mut ty: Type) -> Type {
-        while let Type::Var(v) = ty {
-            match self.binding(v) {
-                Some(bound) => ty = bound.clone(),
-                None => return Type::Var(v),
+    ///
+    /// Along the way it shortens chains of variables bound to variables: every
+    /// variable on the chain is rebound to the last variable of the chain, so a
+    /// later walk from any of them takes at most two steps.
+    fn shallow_compress(&mut self, ty: Type) -> Type {
+        let Type::Var(start) = ty else {
+            return ty;
+        };
+
+        // First pass: find the end of the chain of variable-to-variable links.
+        let mut end = start;
+        let mut links = 0usize;
+        while let Some(Type::Var(next)) = self.binding(end) {
+            end = *next;
+            links += 1;
+        }
+
+        // Second pass: point every variable before the last link straight at
+        // `end`. A chain of one link is already as short as it gets.
+        if links > 1 {
+            let mut v = start;
+            while v != end {
+                let next = match self.binding(v) {
+                    Some(Type::Var(next)) => *next,
+                    _ => break,
+                };
+                if next != end {
+                    if let Some(slot) = self.bindings.get_mut(v.to_u32() as usize) {
+                        *slot = Some(Type::Var(end));
+                    }
+                }
+                v = next;
             }
         }
-        ty
+
+        match self.binding(end) {
+            Some(bound) => bound.clone(),
+            None => Type::Var(end),
+        }
     }
 
     /// Binds an unbound variable to a type, after the occurs check.
@@ -280,7 +377,7 @@ impl Unifier {
         if self.occurs(var, &ty) {
             return Err(TypeError::Occurs {
                 var,
-                ty: self.resolve(&ty),
+                ty: self.resolve_for_error(&ty),
             });
         }
         // A variable this unifier has not minted (one passed in from elsewhere)
@@ -300,9 +397,12 @@ impl Unifier {
     /// Reports whether `var` occurs anywhere within `ty`, looking through bindings.
     ///
     /// Iterative, with an explicit work stack, so an arbitrarily deep type cannot
-    /// overflow the call stack.
+    /// overflow the call stack. Each bound variable's binding is searched at most
+    /// once, so bindings that share structure cost time linear in their size, not
+    /// in the number of paths through them.
     fn occurs(&self, var: TyVar, ty: &Type) -> bool {
         let mut stack = Vec::new();
+        let mut searched: BTreeSet<TyVar> = BTreeSet::new();
         stack.push(ty);
         while let Some(term) = stack.pop() {
             match term {
@@ -311,10 +411,122 @@ impl Unifier {
                         return true;
                     }
                     if let Some(bound) = self.binding(*other) {
-                        stack.push(bound);
+                        if searched.insert(*other) {
+                            stack.push(bound);
+                        }
                     }
                 }
                 Type::App(_, args) => stack.extend(args.iter()),
+            }
+        }
+        false
+    }
+}
+
+/// How many levels deep an error payload's type may grow through substituted
+/// variables.
+const ERROR_DEPTH: usize = 64;
+
+/// How many nodes an error payload's type may reach through substituted
+/// variables.
+const ERROR_NODES: usize = 1024;
+
+#[cfg(feature = "serde")]
+mod serde_repr {
+    //! Deserialization goes through a plain mirror of [`Unifier`] and is
+    //! checked before it becomes one, so restored state cannot hold a binding
+    //! cycle that would make later calls loop forever.
+
+    use alloc::vec::Vec;
+    use core::fmt;
+
+    use super::Unifier;
+    use crate::ty::Type;
+
+    /// The serialized shape of a [`Unifier`].
+    #[derive(serde::Deserialize)]
+    pub(super) struct UnifierRepr {
+        bindings: Vec<Option<Type>>,
+    }
+
+    /// Restored bindings that refer back to themselves.
+    #[derive(Debug)]
+    pub(super) struct CyclicBindings;
+
+    impl fmt::Display for CyclicBindings {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("unifier bindings contain a cycle")
+        }
+    }
+
+    impl TryFrom<UnifierRepr> for Unifier {
+        type Error = CyclicBindings;
+
+        fn try_from(repr: UnifierRepr) -> Result<Self, Self::Error> {
+            if has_cycle(&repr.bindings) {
+                return Err(CyclicBindings);
+            }
+            Ok(Unifier {
+                bindings: repr.bindings,
+            })
+        }
+    }
+
+    /// Pushes the bound variables that `ty` mentions directly onto `out`.
+    fn bound_vars_in(ty: &Type, bindings: &[Option<Type>], out: &mut Vec<usize>) {
+        let mut stack = Vec::new();
+        stack.push(ty);
+        while let Some(term) = stack.pop() {
+            match term {
+                Type::Var(v) => {
+                    let index = v.to_u32() as usize;
+                    if matches!(bindings.get(index), Some(Some(_))) {
+                        out.push(index);
+                    }
+                }
+                Type::App(_, args) => stack.extend(args.iter()),
+            }
+        }
+    }
+
+    /// Depth-first search for a cycle among bound variables. Iterative, so a
+    /// long chain cannot overflow the call stack.
+    fn has_cycle(bindings: &[Option<Type>]) -> bool {
+        const NEW: u8 = 0;
+        const OPEN: u8 = 1;
+
+        let mut state = alloc::vec![NEW; bindings.len()];
+        let mut stack: Vec<(usize, Vec<usize>)> = Vec::new();
+
+        for (root, binding) in bindings.iter().enumerate() {
+            let Some(ty) = binding else { continue };
+            if state[root] != NEW {
+                continue;
+            }
+            let mut children = Vec::new();
+            bound_vars_in(ty, bindings, &mut children);
+            state[root] = OPEN;
+            stack.push((root, children));
+
+            while let Some((node, children)) = stack.last_mut() {
+                if let Some(child) = children.pop() {
+                    match state[child] {
+                        OPEN => return true,
+                        NEW => {
+                            let mut grand = Vec::new();
+                            if let Some(Some(ty)) = bindings.get(child) {
+                                bound_vars_in(ty, bindings, &mut grand);
+                            }
+                            state[child] = OPEN;
+                            stack.push((child, grand));
+                        }
+                        _ => {}
+                    }
+                } else {
+                    // Finished: every path from here is known to be acyclic.
+                    state[*node] = 2;
+                    stack.pop();
+                }
             }
         }
         false
@@ -327,7 +539,6 @@ mod tests {
     use alloc::vec;
 
     use super::*;
-    use crate::ty::TyCon;
 
     const INT: TyCon = TyCon::new(0);
     const BOOL: TyCon = TyCon::new(1);

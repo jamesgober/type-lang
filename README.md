@@ -37,7 +37,7 @@
 
 - **First-order unification** with an occurs check, so a variable can never be bound to a type that contains itself. The substitution produced is a most-general unifier.
 - **Language-agnostic** type representation: constructors are opaque tags the consumer assigns meaning to, so the same core expresses primitives, generics, functions, and tuples.
-- **Iterative core** &mdash; unification and the occurs check use explicit work stacks, so a deeply nested type cannot overflow the call stack.
+- **Iterative core** &mdash; `unify`, the occurs check, `resolve` and `Display` use explicit work stacks, so a deeply nested type cannot overflow the call stack in them. Error payloads are kept small, so a failure at the end of a long chain of bindings is cheap to print and drop. The occurs check searches each binding once, so bindings that share structure cost linear time. A `Type` is still an ordinary nested value: its derived `Clone`, `PartialEq`, `Hash`, `Debug` and drop recurse once per level of nesting.
 - **`no_std`-friendly** (needs only `alloc`), with optional `serde` for serialising type terms and inference state.
 - **No panics** in shipping code; every failure is a defined `TypeError`. `#![forbid(unsafe_code)]`.
 
