@@ -14,8 +14,8 @@ use crate::ty::{TyVar, Type};
 /// - binding a variable would make it refer to itself, producing an infinite type
 ///   ([`Occurs`](Self::Occurs)).
 ///
-/// Both variants carry the offending types, fully resolved under the substitution
-/// at the point of failure, so the failure is actionable when it is rendered far
+/// Both variants carry the offending types, resolved under the substitution at
+/// the point of failure, so the failure is actionable when it is rendered far
 /// from the call that produced it — typically by mapping it onto a `diag-lang`
 /// diagnostic with the consumer's own type names.
 ///
@@ -44,7 +44,10 @@ pub enum TypeError {
     /// Returned when the heads differ (`Int` versus `Bool`) or when the same head
     /// is applied to a different arity (`Pair<A>` versus `Pair<A, B>`). Both sides
     /// are resolved under the current substitution before being stored, so they
-    /// show the most concrete form known at the point of failure.
+    /// show the most concrete form known at the point of failure. Substitution
+    /// stops once a payload is 64 levels deep or holds about 1,024 nodes; past
+    /// that, a bound variable is left in place, and
+    /// [`Unifier::resolve`](crate::Unifier::resolve) expands it fully.
     ///
     /// `unify(a, b)` records `a` as `expected` and `b` as `found`. Unification
     /// itself is symmetric — the labels only reflect the argument order, to match
@@ -65,7 +68,8 @@ pub enum TypeError {
     Occurs {
         /// The variable that would refer to itself.
         var: TyVar,
-        /// The type it would have been bound to, resolved.
+        /// The type it would have been bound to, resolved within the same size
+        /// limit as [`Mismatch`](Self::Mismatch).
         ty: Type,
     },
 }
